@@ -22,7 +22,7 @@ enum struct VoteInfo
 	CustomVoteSetup setup;
 	
 	// Vote timeout timer handle.
-	Handle VoteTimeoutTimer;
+	Handle vote_timeout_timer;
 	
 	// Resets back everything to default values.
 	void Reset()
@@ -34,7 +34,7 @@ enum struct VoteInfo
 		
 		this.setup.Reset();
 		
-		delete this.VoteTimeoutTimer;
+		delete this.vote_timeout_timer;
 	}
 	
 	void CallResult(Function func, int results[MAXPLAYERS + 1])
@@ -69,8 +69,8 @@ public Plugin myinfo =
 {
 	name = "[CS:GO] Custom Votes", 
 	author = "KoNLiG", 
-	description = "Replicates the internal CS:GO panel votes from official Valve servers.", 
-	version = "1.0.0", 
+	description = "Exposes the functionality of the internal CS:GO vote panels.", 
+	version = "1.0", 
 	url = "https://steamcommunity.com/id/KoNLiGrL/ || KoNLiG#0001"
 };
 
@@ -292,8 +292,8 @@ any Native_Execute(Handle plugin, int numParams)
 		DisplayCustomVotePanel(clients, clients_count);
 	}
 	
-	delete g_VoteInfoData.VoteTimeoutTimer;
-	g_VoteInfoData.VoteTimeoutTimer = CreateTimer(float(GetNativeCell(2)), Timer_DisplayCustomVoteResults);
+	delete g_VoteInfoData.vote_timeout_timer;
+	g_VoteInfoData.vote_timeout_timer = CreateTimer(float(GetNativeCell(2)), Timer_DisplayCustomVoteResults);
 	
 	for (int current_client = 0; current_client <= MaxClients; current_client++)
 	{
@@ -362,9 +362,9 @@ any Native_Cancel(Handle plugin, int numParams)
 
 Action Timer_DisplayCustomVoteResults(Handle timer)
 {
-	DisplayCustomVoteResults();
+	g_VoteInfoData.vote_timeout_timer = INVALID_HANDLE;
 	
-	g_VoteInfoData.VoteTimeoutTimer = INVALID_HANDLE;
+	DisplayCustomVoteResults();
 }
 
 Action Timer_RepeatVoteDisplay(Handle timer)
