@@ -3,8 +3,9 @@
 #endif
 #define _customvotes_included
 
-#define SERVER_OPERATOR_ID 0
-#define DEFAULT_PASS_PERCENTAGE 50.0
+#define SERVER_OPERATOR_ID 		0	 /**< Console vote initiator id */
+#define DEFAULT_PASS_PERCENTAGE 50.0 /**< Vote pass percenage that will be setted if 'pass_percentage' isn't setted */
+#define VOTE_DURATION_FOREVER 	0 	 /**< Vote should be broadcasted as long as possible */
 
 /**
  * Client's custom vote decisions.
@@ -93,12 +94,17 @@ enum
 enum struct CustomVoteSetup
 {
 	// Team id to broadcast the custom vote.
+	// 
+	// Note: This is ignored if 'clients' array is specified.
 	//
 	// CS_TEAM_NONE (0)   	   To everyone
 	// CS_TEAM_SPECTATOR (1)   To spectators only
 	// CS_TEAM_T (2) 		   To terrorists only
 	// CS_TEAM_CT (3)   	   To counter-terrorists only
 	int team;
+	
+	int clients[MAXPLAYERS]; // Array containing player indexes to broadcast to.
+	int client_count;		 // Number of players in the array.
 	
 	// Custom vote initiator client index (who executed the vote), or SERVER_OPERATOR_ID for console. 
 	int initiator;
@@ -116,36 +122,63 @@ enum struct CustomVoteSetup
 	// Disposition string to display on the custom vote panel once the vote has passed. (HTML based text)
 	char disppass[512];
 	
+	// Optional data to parse through vote callbacks.
+	any data;
+	
 	// Resets back everything to default values.
 	void Reset()
 	{
 		this.team = 0;
+		
+		for (int current_index; current_index < MAXPLAYERS; current_index++)
+		{
+			this.clients[current_index] = 0;
+		}
+		
+		this.client_count = 0;
 		this.initiator = 0;
 		this.issue_id = 0;
 		this.pass_percentage = 0.0;
 		this.dispstr[0] = '\0';
 		this.disppass[0] = '\0';
+		this.data = 0;
 	}
 }
 
 /**
- *	Called when a custom vote result is available.
- *	
- *	@param results	    		Array that contains the decisions of the voters.
+ * Any of the following prototypes will work as a custom vote callback.
  */
-typedef CustomVote_Callback = function void (int results[MAXPLAYERS + 1]);
+typeset CustomVote_Callback
+{
+	/**
+	 * Called when a custom vote result is available.
+	 *
+	 * @param results	    Array that contains the decisions of the voters.
+	 * @param data          Data passed to CustomVotes_Execute() when vote was executed.
+	 */
+	function void (int results[MAXPLAYERS + 1], any data);
+	
+	/**
+	 * Called when a custom vote result is available.
+	 *
+	 * @param results	    Array that contains the decisions of the voters.
+	 */
+	function void (int results[MAXPLAYERS + 1]);
+};
 
 /**
  *	Executes a custom CS:GO panel vote.
  *	
  *	@param setup			    A fully configurated custom	vote setup data struct.
- *  @param timeout_duration		Time in seconds for the custom vote to display until timeout.
+ *  @param timeout_duration		Time in seconds for the custom vote to display until timeout, 
+ *								or 'VOTE_DURATION_FOREVER' to last it as long as possible.
  *  @param passed_callback      Callback function to call once the vote has passed.
  *  @param failed_callback      Callback function to call once the vote has failed.
+ *  @param data           		Optional data value to pass to the callback(s).
  *
  *  @error 						Another custom vote is currently in progress.
  */
-native void CustomVotes_Execute(any[] setup, int timeout_duration, CustomVote_Callback passed_callback = INVALID_FUNCTION, CustomVote_Callback failed_callback = INVALID_FUNCTION);
+native void CustomVotes_Execute(any[] setup, int timeout_duration, CustomVote_Callback passed_callback = INVALID_FUNCTION, CustomVote_Callback failed_callback = INVALID_FUNCTION, any data = 0);
 
 /**
  * Returns whether a custom vote is in progress.
@@ -171,6 +204,14 @@ native void CustomVotes_GetSetup(any[] buffer);
 native void CustomVotes_Cancel(bool force = false);
 
 /**
+ * Retrieves all the players decisions related to the current custom vote.
+ * 
+ * @param results         		Buffer to store the vote decision results. (See the enum above)
+ * @error						No custom vote is currently in progress.
+ */
+native void CustomVotes_GetVoteDecisions(int results[MAXPLAYERS + 1]);
+
+/**
  * Called when a custom vote is receiving from a client.
  * 
  * @param client             	Client index.
@@ -187,6 +228,7 @@ public void __pl_customvotes_SetNTVOptional()
 	MarkNativeAsOptional("CustomVotes_IsVoteInProgress");
 	MarkNativeAsOptional("CustomVotes_GetSetup");
 	MarkNativeAsOptional("CustomVotes_Cancel");
+	MarkNativeAsOptional("CustomVotes_GetVoteDecisions");
 }
 #endif
 

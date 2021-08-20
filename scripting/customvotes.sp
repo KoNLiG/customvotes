@@ -41,6 +41,7 @@ enum struct VoteInfo
 	{
 		Call_StartFunction(this.plugin, func);
 		Call_PushArray(results, sizeof(results));
+		Call_PushCell(this.setup.data);
 		Call_Finish();
 	}
 }
@@ -52,7 +53,7 @@ ConVar g_PositiveVoteSound;
 ConVar g_NegativeVoteSound;
 
 // Global Forward Handles.
-GlobalForward g_fwdOnVoteReceive;
+GlobalForward g_OnVoteReceive;
 
 // User Message Id Handles.
 UserMsg g_VoteStartMsgId;
@@ -70,18 +71,12 @@ public Plugin myinfo =
 	name = "[CS:GO] Custom Votes", 
 	author = "KoNLiG", 
 	description = "Exposes the functionality of the internal CS:GO vote panels.", 
-	version = "1.0", 
+	version = "1.4", 
 	url = "https://steamcommunity.com/id/KoNLiGrL/ || KoNLiG#0001"
 };
 
 public void OnPluginStart()
 {
-	// ConVars Configuration.
-	g_PositiveVoteSound = CreateConVar("custom_votes_positive_vote_sound", "sound/ui/menu_accept.wav", "Sound file path that will be played once a client has voted yes.");
-	g_NegativeVoteSound = CreateConVar("custom_votes_negative_vote_sound", "sound/ui/menu_invalid.wav", "Sound file path that will be played once a client has voted no.");
-	
-	AutoExecConfig();
-	
 	// Initialize user messages ids.
 	if ((g_VoteStartMsgId = GetUserMessageId("VoteStart")) == INVALID_MESSAGE_ID)
 	{
@@ -97,6 +92,12 @@ public void OnPluginStart()
 	{
 		SetFailState("Couldn't get 'VoteFailed' user message id.");
 	}
+	
+	// ConVars Configuration.
+	g_PositiveVoteSound = CreateConVar("custom_votes_positive_vote_sound", "sound/ui/menu_accept.wav", "Sound file path that will be played once a client has voted yes.");
+	g_NegativeVoteSound = CreateConVar("custom_votes_negative_vote_sound", "sound/ui/menu_invalid.wav", "Sound file path that will be played once a client has voted no.");
+	
+	AutoExecConfig();
 	
 	// Hook 'vote' command which will be a votes receive listener.
 	AddCommandListener(Listener_OnVoteReceive, "vote");
@@ -170,7 +171,7 @@ Action Listener_OnVoteReceive(int client, const char[] command, int argc)
 	
 	// Execute the vote receive forward.
 	Action fwd_return;
-	Call_StartForward(g_fwdOnVoteReceive);
+	Call_StartForward(g_OnVoteReceive);
 	Call_PushCell(client); // int client
 	Call_PushCellRef(vote_decision); // int &voteDecision
 	
@@ -226,12 +227,15 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 		return APLRes_Failure;
 	}
 	
+	// Natives.
 	CreateNative("CustomVotes_Execute", Native_Execute);
 	CreateNative("CustomVotes_IsVoteInProgress", Native_IsVoteInProgress);
 	CreateNative("CustomVotes_GetSetup", Native_GetSetup);
 	CreateNative("CustomVotes_Cancel", Native_Cancel);
+	CreateNative("CustomVotes_GetVoteDecisions", Native_GetVoteDecisions);
 	
-	g_fwdOnVoteReceive = new GlobalForward("CustomVotes_OnVoteReceive", ET_Hook, Param_Cell, Param_CellByRef);
+	// Forwards.
+	g_OnVoteReceive = new GlobalForward("CustomVotes_OnVoteReceive", ET_Hook, Param_Cell, Param_CellByRef);
 	
 	RegPluginLibrary("customvotes");
 	
@@ -240,7 +244,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 any Native_Execute(Handle plugin, int numParams)
 {
-	// If a another custom vote is already is progress, throw a native error and don't continue
+	// If a another custom vote is already is progress, throw a native error and don't continue.
 	if (g_IsVoteInProgress)
 	{
 		return ThrowNativeError(SP_ERROR_NATIVE, "Unable to execute a new custom vote, there is already one in progress.");
@@ -261,6 +265,7 @@ any Native_Execute(Handle plugin, int numParams)
 	g_VoteInfoData.plugin = plugin;
 	g_VoteInfoData.pass_function = GetNativeFunction(3);
 	g_VoteInfoData.fail_function = GetNativeFunction(4);
+	g_VoteInfoData.setup.data = GetNativeCell(5);
 	
 	SetEntProp(g_VoteControllerEnt, Prop_Send, "m_iOnlyTeamToVote", g_VoteInfoData.setup.team);
 	
@@ -269,32 +274,28 @@ any Native_Execute(Handle plugin, int numParams)
 		SetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", 0, _, current_option);
 	}
 	
-	SetEntProp(g_VoteControllerEnt, Prop_Send, "m_nPotentialVotes", GetClientCount());
-	
 	g_IsVoteInProgress = true;
 	
-	char url[PLATFORM_MAX_PATH];
-	GetImageFromText(g_VoteInfoData.setup.dispstr, url, sizeof(url));
+	UpdatePotentialVotes();
 	
 	if (!PrecacheImage(g_VoteInfoData.setup.dispstr, Timer_RepeatVoteDisplay))
 	{
 		int clients[MAXPLAYERS];
-		int clients_count;
+		int client_count;
+		GetVoteBroadcastClients(clients, client_count);
 		
-		for (int current_client = 1; current_client <= MaxClients; current_client++)
-		{
-			if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || GetClientTeam(current_client) == g_VoteInfoData.setup.team))
-			{
-				clients[clients_count++] = current_client;
-			}
-		}
-		
-		DisplayCustomVotePanel(clients, clients_count);
+		DisplayCustomVotePanel(clients, client_count);
 	}
 	
-	delete g_VoteInfoData.vote_timeout_timer;
-	g_VoteInfoData.vote_timeout_timer = CreateTimer(float(GetNativeCell(2)), Timer_DisplayCustomVoteResults);
+	// Create a timeout timer if needs to.
+	int timeout_duration = GetNativeCell(2);
+	if (timeout_duration != VOTE_DURATION_FOREVER)
+	{
+		delete g_VoteInfoData.vote_timeout_timer;
+		g_VoteInfoData.vote_timeout_timer = CreateTimer(float(timeout_duration), Timer_DisplayCustomVoteResults);
+	}
 	
+	// Reset every the client vote decisions array value.
 	for (int current_client = 0; current_client <= MaxClients; current_client++)
 	{
 		g_ClientVoteDecision[current_client] = VOTE_DECISION_NONE;
@@ -335,17 +336,10 @@ any Native_Cancel(Handle plugin, int numParams)
 	}
 	
 	int clients[MAXPLAYERS];
-	int clients_count;
+	int client_count;
+	GetVoteBroadcastClients(clients, client_count);
 	
-	for (int current_client = 1; current_client <= MaxClients; current_client++)
-	{
-		if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || GetClientTeam(current_client) == g_VoteInfoData.setup.team))
-		{
-			clients[clients_count++] = current_client;
-		}
-	}
-	
-	Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VoteFailedMsgId, clients, clients_count, USERMSG_RELIABLE));
+	Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VoteFailedMsgId, clients, client_count, USERMSG_RELIABLE));
 	
 	msg.SetInt("team", g_VoteInfoData.setup.team);
 	msg.SetInt("reason", VOTE_FAILED_DISABLED);
@@ -354,6 +348,19 @@ any Native_Cancel(Handle plugin, int numParams)
 	
 	g_VoteInfoData.Reset();
 	g_IsVoteInProgress = false;
+	
+	return 0;
+}
+
+any Native_GetVoteDecisions(Handle plugin, int numParams)
+{
+	// If no custom vote is currently is progress, throw a native error and don't continue
+	if (!g_IsVoteInProgress)
+	{
+		return ThrowNativeError(SP_ERROR_NATIVE, "No custom vote is currently in progress.");
+	}
+	
+	SetNativeArray(1, g_ClientVoteDecision, sizeof(g_ClientVoteDecision));
 	
 	return 0;
 }
@@ -370,17 +377,10 @@ Action Timer_DisplayCustomVoteResults(Handle timer)
 Action Timer_RepeatVoteDisplay(Handle timer)
 {
 	int clients[MAXPLAYERS];
-	int clients_count;
+	int client_count;
+	GetVoteBroadcastClients(clients, client_count);
 	
-	for (int current_client = 1; current_client <= MaxClients; current_client++)
-	{
-		if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || GetClientTeam(current_client) == g_VoteInfoData.setup.team))
-		{
-			clients[clients_count++] = current_client;
-		}
-	}
-	
-	DisplayCustomVotePanel(clients, clients_count);
+	DisplayCustomVotePanel(clients, client_count);
 }
 
 Action Timer_RepeatVotePass(Handle timer)
@@ -388,17 +388,10 @@ Action Timer_RepeatVotePass(Handle timer)
 	#pragma unused timer
 	
 	int clients[MAXPLAYERS];
-	int clients_count;
+	int client_count;
+	GetVoteBroadcastClients(clients, client_count);
 	
-	for (int current_client = 1; current_client <= MaxClients; current_client++)
-	{
-		if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || GetClientTeam(current_client) == g_VoteInfoData.setup.team))
-		{
-			clients[clients_count++] = current_client;
-		}
-	}
-	
-	Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VotePassMsgId, clients, clients_count, USERMSG_RELIABLE));
+	Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VotePassMsgId, clients, client_count, USERMSG_RELIABLE));
 	
 	msg.SetInt("team", g_VoteInfoData.setup.team);
 	msg.SetInt("vote_type", g_VoteInfoData.setup.issue_id);
@@ -415,15 +408,8 @@ void DisplayCustomVoteResults()
 	int negative_votes = GetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", _, 1);
 	
 	int clients[MAXPLAYERS];
-	int clients_count;
-	
-	for (int current_client = 1; current_client <= MaxClients; current_client++)
-	{
-		if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || g_VoteInfoData.setup.team == GetClientTeam(current_client)))
-		{
-			clients[clients_count++] = current_client;
-		}
-	}
+	int client_count;
+	GetVoteBroadcastClients(clients, client_count);
 	
 	Function result_callback;
 	
@@ -433,7 +419,7 @@ void DisplayCustomVoteResults()
 	{
 		if (!PrecacheImage(g_VoteInfoData.setup.disppass, Timer_RepeatVotePass))
 		{
-			Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VotePassMsgId, clients, clients_count, USERMSG_RELIABLE));
+			Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VotePassMsgId, clients, client_count, USERMSG_RELIABLE));
 			
 			msg.SetInt("team", g_VoteInfoData.setup.team);
 			msg.SetInt("vote_type", g_VoteInfoData.setup.issue_id);
@@ -447,7 +433,7 @@ void DisplayCustomVoteResults()
 	}
 	else
 	{
-		Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VoteFailedMsgId, clients, clients_count, USERMSG_RELIABLE));
+		Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VoteFailedMsgId, clients, client_count, USERMSG_RELIABLE));
 		
 		msg.SetInt("team", g_VoteInfoData.setup.team);
 		msg.SetInt("reason", GetVoteFailReason());
@@ -487,7 +473,7 @@ void UpdatePotentialVotes()
 	}
 	
 	// Change the vote controller potential votes value to the updated one
-	SetEntProp(g_VoteControllerEnt, Prop_Send, "m_nPotentialVotes", g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE ? GetClientCount() : GetTeamClientCount(g_VoteInfoData.setup.team));
+	SetEntProp(g_VoteControllerEnt, Prop_Send, "m_nPotentialVotes", g_VoteInfoData.setup.client_count ? g_VoteInfoData.setup.client_count : g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE ? GetClientCount() : GetTeamClientCount(g_VoteInfoData.setup.team));
 }
 
 bool PrecacheImage(const char[] text, Timer redirect_callback)
@@ -509,7 +495,17 @@ bool PrecacheImage(const char[] text, Timer redirect_callback)
 		event.SetString("loc_token", url);
 		event.SetInt("duration", 0);
 		event.SetInt("userid", -1);
-		event.Fire();
+		
+		int clients[MAXPLAYERS];
+		int client_count;
+		GetVoteBroadcastClients(clients, client_count);
+		
+		for (int current_client; current_client < client_count; current_client++)
+		{
+			event.FireToClient(clients[current_client]);
+		}
+		
+		event.Cancel();
 	}
 	
 	CreateTimer(1.0, redirect_callback);
@@ -551,6 +547,25 @@ void DisplayCustomVotePanel(int[] clients, int clients_count)
 	msg.SetInt("entidx_target", 0);
 	
 	EndMessage();
+}
+
+void GetVoteBroadcastClients(int clients[MAXPLAYERS], int &client_count)
+{
+	if (g_VoteInfoData.setup.client_count)
+	{
+		clients = g_VoteInfoData.setup.clients;
+		client_count = g_VoteInfoData.setup.client_count;
+	}
+	else
+	{
+		for (int current_client = 1; current_client <= MaxClients; current_client++)
+		{
+			if (IsClientInGame(current_client) && !IsFakeClient(current_client) && (g_VoteInfoData.setup.team == VOTE_TEAMID_EVERYONE || g_VoteInfoData.setup.team == GetClientTeam(current_client)))
+			{
+				clients[client_count++] = current_client;
+			}
+		}
+	}
 }
 
 int GetVoteFailReason()
