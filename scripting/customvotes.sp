@@ -71,7 +71,7 @@ public Plugin myinfo =
 	name = "[CS:GO] Custom Votes", 
 	author = "KoNLiG", 
 	description = "Exposes the functionality of the internal CS:GO vote panels.", 
-	version = "1.4", 
+	version = "2.2", 
 	url = "https://steamcommunity.com/id/KoNLiGrL/ || KoNLiG#0001"
 };
 
@@ -405,7 +405,6 @@ Action Timer_RepeatVotePass(Handle timer)
 void DisplayCustomVoteResults()
 {
 	int positive_votes = GetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", _, 0);
-	int negative_votes = GetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", _, 1);
 	
 	int clients[MAXPLAYERS];
 	int client_count;
@@ -413,9 +412,7 @@ void DisplayCustomVoteResults()
 	
 	Function result_callback;
 	
-	int total_voters = positive_votes + negative_votes;
-	
-	if (total_voters && (float(positive_votes) / float(total_voters)) * 100.0 >= g_VoteInfoData.setup.pass_percentage)
+	if ((float(positive_votes) / float(client_count)) * 100.0 >= g_VoteInfoData.setup.pass_percentage)
 	{
 		if (!PrecacheImage(g_VoteInfoData.setup.disppass, Timer_RepeatVotePass))
 		{
@@ -553,6 +550,15 @@ void GetVoteBroadcastClients(int clients[MAXPLAYERS], int &client_count)
 {
 	if (g_VoteInfoData.setup.client_count)
 	{
+		// Verify the clients array.
+		for (int current_client; current_client < g_VoteInfoData.setup.client_count; current_client++)
+		{
+			if (!IsClientInGame(g_VoteInfoData.setup.clients[current_client]))
+			{
+				g_VoteInfoData.setup.clients[g_VoteInfoData.setup.client_count--] = 0;
+			}
+		}
+		
 		clients = g_VoteInfoData.setup.clients;
 		client_count = g_VoteInfoData.setup.client_count;
 	}
