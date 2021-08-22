@@ -342,7 +342,7 @@ any Native_Cancel(Handle plugin, int numParams)
 	Protobuf msg = view_as<Protobuf>(StartMessageEx(g_VoteFailedMsgId, clients, client_count, USERMSG_RELIABLE));
 	
 	msg.SetInt("team", g_VoteInfoData.setup.team);
-	msg.SetInt("reason", VOTE_FAILED_DISABLED);
+	msg.SetInt("reason", VOTE_FAILED_GENERIC);
 	
 	EndMessage();
 	
