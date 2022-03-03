@@ -49,8 +49,9 @@ enum struct VoteInfo
 VoteInfo g_VoteInfoData;
 
 // ConVar Handles.
-ConVar g_PositiveVoteSound;
-ConVar g_NegativeVoteSound;
+ConVar custom_votes_positive_vote_sound;
+ConVar custom_votes_negative_vote_sound;
+ConVar custom_votes_result_method;
 
 // Global Forward Handles.
 GlobalForward g_OnVoteReceive;
@@ -71,8 +72,8 @@ public Plugin myinfo =
 	name = "[CS:GO] Custom Votes", 
 	author = "KoNLiG", 
 	description = "Exposes the functionality of the internal CS:GO vote panels.", 
-	version = "2.2", 
-	url = "https://steamcommunity.com/id/KoNLiGrL/ || KoNLiG#0001"
+	version = "2.3", 
+	url = "https://steamcommunity.com/id/KoNLiG/ || KoNLiG#6417"
 };
 
 public void OnPluginStart()
@@ -94,9 +95,10 @@ public void OnPluginStart()
 	}
 	
 	// ConVars Configuration.
-	g_PositiveVoteSound = CreateConVar("custom_votes_positive_vote_sound", "sound/ui/menu_accept.wav", "Sound file path that will be played once a client has voted yes.");
-	g_NegativeVoteSound = CreateConVar("custom_votes_negative_vote_sound", "sound/ui/menu_invalid.wav", "Sound file path that will be played once a client has voted no.");
-	
+	custom_votes_positive_vote_sound = CreateConVar("custom_votes_positive_vote_sound", "sound/ui/menu_accept.wav", "Sound file path that will be played once a client has voted yes.");
+	custom_votes_negative_vote_sound = CreateConVar("custom_votes_negative_vote_sound", "sound/ui/menu_invalid.wav", "Sound file path that will be played once a client has voted no.");
+	custom_votes_result_method = CreateConVar("custom_votes_result_method", "0", "Whether to include players who didn't vote as no-votes. 0 - Do not include, 1 - Include.", .hasMin = true, .hasMax = true, .max = 1.0);	
+
 	AutoExecConfig();
 	
 	// Hook 'vote' command which will be a votes receive listener.
@@ -115,11 +117,11 @@ public void OnMapStart()
 	
 	char sound_path[PLATFORM_MAX_PATH];
 	
-	g_PositiveVoteSound.GetString(sound_path, sizeof(sound_path));
+	custom_votes_positive_vote_sound.GetString(sound_path, sizeof(sound_path));
 	AddFileToDownloadsTable(sound_path);
 	PrecacheSound(sound_path[6]);
 	
-	g_NegativeVoteSound.GetString(sound_path, sizeof(sound_path));
+	custom_votes_negative_vote_sound.GetString(sound_path, sizeof(sound_path));
 	AddFileToDownloadsTable(sound_path);
 	PrecacheSound(sound_path[6]);
 }
@@ -200,7 +202,7 @@ Action Listener_OnVoteReceive(int client, const char[] command, int argc)
 	
 	// Initialize the selection sound effect file path.
 	char sound_effect[PLATFORM_MAX_PATH];
-	GetConVarString(vote_decision == VOTE_DECISION_YES ? g_PositiveVoteSound : g_NegativeVoteSound, sound_effect, sizeof(sound_effect));
+	GetConVarString(vote_decision == VOTE_DECISION_YES ? custom_votes_positive_vote_sound : custom_votes_negative_vote_sound, sound_effect, sizeof(sound_effect));
 	
 	// Play the selection sound effect. (:
 	EmitSoundToClient(client, sound_effect[6]);
@@ -405,14 +407,15 @@ Action Timer_RepeatVotePass(Handle timer)
 void DisplayCustomVoteResults()
 {
 	int positive_votes = GetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", _, 0);
-	
+	int negative_votes = GetEntProp(g_VoteControllerEnt, Prop_Send, "m_nVoteOptionCount", _, 1);
+
 	int clients[MAXPLAYERS];
 	int client_count;
 	GetVoteBroadcastClients(clients, client_count);
 	
 	Function result_callback;
-	
-	if ((float(positive_votes) / float(client_count)) * 100.0 >= g_VoteInfoData.setup.pass_percentage)
+
+	if ((float(positive_votes) / float(custom_votes_result_method.BoolValue ? client_count : (positive_votes + negative_votes))) * 100.0 >= g_VoteInfoData.setup.pass_percentage)
 	{
 		if (!PrecacheImage(g_VoteInfoData.setup.disppass, Timer_RepeatVotePass))
 		{
