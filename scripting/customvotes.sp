@@ -163,14 +163,26 @@ Action Listener_OnVoteReceive(int client, const char[] command, int argc)
 	{
 		return Plugin_Continue;
 	}
-	
+
+	// Prevent a client from voting more than once.
+	if (g_ClientVoteDecision[client] != VOTE_DECISION_NONE)
+	{
+		return Plugin_Handled;
+	}
+
 	// Initialize the client vote decision
 	char vote_choice[16];
 	GetCmdArg(1, vote_choice, sizeof(vote_choice));
-	
+
 	// Convert the client vote decision into a integer (0 = Yes, 1 = No)
 	int vote_decision = StringToInt(vote_choice[6]) - 1;
-	
+
+	// Block any vote decision that is not a valid yes/no option.
+	if (vote_decision != VOTE_DECISION_YES && vote_decision != VOTE_DECISION_NO)
+	{
+		return Plugin_Handled;
+	}
+
 	// Execute the vote receive forward.
 	Action fwd_return;
 	Call_StartForward(g_OnVoteReceive);
